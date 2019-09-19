@@ -1,0 +1,463 @@
+---
+title: "Know Your Friends' Mood through Music Lyrics"
+author: "NAN YANG"
+date: "9/18/2019"
+output: html_document
+---
+##Know Your friends' Mood through Music Lyrics
+####This project is mainly about how to discover your friends' mood based on their prefered music in the moment. 
+####In this project, we assume people in bad moods tend to search sympathy in music, which is generally true in real world.
+####Basicly, if a person **starts** to be fond of music with more negative emotion lyrics, the probability that she(he) has a bad mood becomes higher.  In addition, this project also provides more details of the reasons, so you can choose how to move to make your friends happy. 
+####In this project, there are 3 steps:
++ Divide all these music genres into two parts based on their emotional lyrics.
++ In general, find out the main differences between this two groups' lyrics.
++ Find more possible reasons about their differences.
+
+
+####First, install libraries I will use. 
+####I use a chunk to write codes that can save your time to install the libraries your R-Stuio don't have.
+```{r load libraries, warning=FALSE, message=FALSE,echo=FALSE}
+packages.used=c("tidyverse", "tidytext", "DT", "tidyr", "dplyr",
+                "data.table", "wordcloud", "wordcloud2", "scales", "gridExtra",
+                "ngram", "syuzhet", "foreign","lubridate", 
+                 "RColorBrewer", "ggplot2",
+                "RANN", "tm", "topicmodels","NLP",
+                "SnowballC","janeaustenr","httr","reshape2")
+# check packages that need to be installed.
+packages.needed=setdiff(packages.used, 
+                        intersect(installed.packages()[,1], 
+                                  packages.used))
+# install additional packages
+if(length(packages.needed)>0){
+  install.packages(packages.needed, dependencies = TRUE)
+}
+
+library(tidyverse)
+library(tidytext)
+library(DT)
+library(tidyr)
+library(dplyr)
+library(data.table)
+library(wordcloud)
+library(wordcloud2)
+library(scales)
+library(gridExtra)
+library(ngram)
+library(syuzhet)
+library(foreign)                       
+library(lubridate)
+library(RColorBrewer)
+library(ggplot2)
+library(tm)
+library(topicmodels)
+library(NLP)
+library(SnowballC)
+library(janeaustenr)
+library(httr)
+library(reshape2)
+```
+
+### Step 1: Find out how to divide these music genres into two groups based on their emotional lyrics.
+
+####Load data 'processed_lyrics.RData1', which can be found in the folder 'Output'. 
+```{r,load data, warning=FALSE, message=FALSE,echo=FALSE}
+# load lyrics data
+load('~/output/processed_lyrics.RData1') 
+```
+
+####**Note**:Mainly I use the method instructor provided to clean my dataset to get 'processed_lyrics.RData1'. However, I drop more words:  
++ I drop word 'love' since this word can represent both good mood and bad mood. More important, there are too many 'love' in the dataset and it would be easier to find out more information after cleaning 'love'.
++ Some racism words are cleaned as well.
+
+
+####Sentiment Analysis by *Syuzhet*
+####In the sentiment analysis, my goal is to evaluate the happiness level among all music genres. 
+```{r syuzhet,warning=FALSE, message=FALSE,echo=FALSE}
+# Calculate Sentimental Score by the method of Syuzhet
+lyrics_data <- dt_lyrics
+syz_vec<-get_sentiment(lyrics_data$stemmedwords,method = "syuzhet")
+lyrics_data$syuzhet_score <- syz_vec
+
+afinn_vec<-get_sentiment(lyrics_data$stemmedwords,method = "afinn")
+lyrics_data$afinn_score <- afinn_vec
+
+nrc_vec<-get_sentiment(lyrics_data$stemmedwords,lexicon  = "nrc")
+lyrics_data$nrc_score <- nrc_vec
+```
+
+####First Let's see the word cloud without 'love', it will be quite different.
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+bag_of_words <-  lyrics_data %>%
+  unnest_tokens(word, stemmedwords)
+
+word_count <- bag_of_words %>%
+  count(word, sort = TRUE)
+```
+
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+wordcloud(word_count$word,word_count$n ,
+          scale=c(3,0.1),
+          max.words=100,
+          min.freq=1,
+          random.order=FALSE,
+          rot.per=0.5,
+          use.r.layout=T,
+          random.color=FALSE,
+          colors=brewer.pal(9,"Oranges"))
+```
+
+####Visualizing sentiment level according to Genre by Box-plot.
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+ ggplot(lyrics_data, aes(x=genre, y=syuzhet_score,color=genre)) + 
+  geom_boxplot(notch=TRUE)
+```
+
+####From the box-plot above, we can find out the emotion scores of **Folk**, **Metal** and **Rock** are lower than 0. Thus, we make this three genres a group, named 'EXM'. We make all other genres a group, named 'GEN'. In the following part, we will use more tools to test whether this is appropriate.
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+lyrics_data$emotion_type <- 'GEN'
+lyrics_data[which(lyrics_data$genre=='Folk'),]$emotion_type <- 'EXM'
+lyrics_data[which(lyrics_data$genre=='Metal'),]$emotion_type <- 'EXM'
+lyrics_data[which(lyrics_data$genre=='Rock'),]$emotion_type <- 'EXM'
+```
+
+####Divide two new dataset of 'EXM' and 'GEN'.
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+Emo.data.G <- lyrics_data[which(lyrics_data$emotion_type=='GEN'),]
+Emo.data.E <- lyrics_data[which(lyrics_data$emotion_type=='EXM'),]
+```
+
+####Analysis lyrics from 10 aspects.
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+nrc_G<-get_nrc_sentiment(Emo.data.G$stemmedwords)
+freq_nrc_G<-unname(colSums(nrc_G))
+nrc_class<-c('anger', 'anticipation', 'disgust', 'fear', 'joy', 'sadness', 'surprise', 'trust', 'negative', 'positive')
+data_nrc_G<-data.frame(name=nrc_class,freq=freq_nrc_G)
+data_nrc_G$prop<-unname(freq_nrc_G)/sum(unname(freq_nrc_G))
+data_nrc_G<-data_nrc_G[order(-data_nrc_G$freq),]
+```
+
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+ggplot(data=data_nrc_G)+
+      geom_col(aes(x=reorder(name, prop),y=prop),color='skyblue',fill='steelblue') +
+      labs(title = " Emontion Class of Lyrics GEN")+
+      xlab(NULL) +
+      ylab("Word Frequency")+
+      coord_flip()
+```
+
+
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+nrc_E<-get_nrc_sentiment(Emo.data.E$stemmedwords)
+freq_nrc_E<-unname(colSums(nrc_E))
+nrc_class<-c('anger', 'anticipation', 'disgust', 'fear', 'joy', 'sadness', 'surprise', 'trust', 'negative', 'positive')
+data_nrc_E<-data.frame(name=nrc_class,freq=freq_nrc_E)
+data_nrc_E$prop<-unname(freq_nrc_E)/sum(unname(freq_nrc_E))
+data_nrc_E<-data_nrc_E[order(-data_nrc_E$freq),]
+```
+
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+ ggplot(data=data_nrc_E)+
+      geom_col(aes(x=reorder(name, prop),y=prop),color="#D16103",fill='#FFDB6D') +
+      labs(title = " Emontion class of Lyrics EXM")+
+      xlab(NULL) +
+      ylab("Word Frequency")+
+      coord_flip()
+```
+
+####From two gg-plots, we can make these points:
++ These two groups do have difference in emotion. 'EXM' is more negative than 'GEN'
++ Topic 'fear' appears much more frequent in 'EXM' than 'GEN'.
+####When you realize that your friend **begins** to be fond of some music which belongs to type 'EXM' recently, you'd better pay more attention on her(him) since it is possible thatshe(he) has a bad mood for some reasons.
+
+
+###Step 2: Find out the main differences between these two groups. In addition, start to figure out possible reasons.
+####Word cloud for group 'GEN'.
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+bag_of_words_G <-  Emo.data.G %>%
+  unnest_tokens(word, stemmedwords)
+
+word_count_G <- bag_of_words_G %>%
+  count(word, sort = TRUE)
+```
+
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+wordcloud(word_count_G$word,word_count_G$n ,
+          scale=c(3,0.1),
+          max.words=100,
+          min.freq=1,
+          random.order=FALSE,
+          rot.per=0.5,
+          use.r.layout=T,
+          random.color=FALSE,
+          colors=brewer.pal(9,"Greens"))
+```
+
+####Word cloud for group 'EXM'.
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+bag_of_words_E <-  Emo.data.E %>%
+  unnest_tokens(word, stemmedwords)
+
+word_count_E <- bag_of_words_E %>%
+  count(word, sort = TRUE)
+```
+
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+wordcloud(word_count_E$word,word_count_E$n ,
+          scale=c(3,0.1),
+          max.words=100,
+          min.freq=1,
+          random.order=FALSE,
+          rot.per=0.5,
+          use.r.layout=T,
+          random.color=FALSE,
+          colors=brewer.pal(9,"Blues"))
+
+```
+
+####From two word clouds above, we can find out:
++ For type 'GEN', word 'world' is much more than other words.
++ For type 'EXM', the differences among top 10 words are not that large.
+
+####Futher exploration of frequence of words.
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+set.seed(2333)
+cld.Emo.data.E <- Corpus(VectorSource(Emo.data.E$stemmedwords))
+dtm.Emo.data.E <- TermDocumentMatrix(cld.Emo.data.E)
+dtm.Emo.data.E.ma <- as.matrix(dtm.Emo.data.E)
+dtm.Emo.data.E.ma <- sort(rowSums(dtm.Emo.data.E.ma),decreasing=TRUE)
+d.Emo.data.E.df <- data.frame(word = names(dtm.Emo.data.E.ma),freq=dtm.Emo.data.E.ma)
+```
+
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+ word_count_G[1:15,] %>%
+      mutate(word = reorder(word, n)) %>%
+      ggplot(aes(word, n)) +
+      geom_col() +
+      labs(title = " Word Frequency of lyrics GEN")+
+      xlab(NULL) +
+      ylab("Word Frequency")+
+      coord_flip()
+``` 
+
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+ d.Emo.data.E.df[1:15,] %>%
+      mutate(word = reorder(word, freq)) %>%
+      ggplot(aes(word, freq)) +
+      geom_col() +
+      labs(title ="               Word Frequency of lyrics EXM")+
+      xlab(NULL) +
+      ylab("Word Frequency")+
+      coord_flip()
+``` 
+
+####From these two pictures, we can find out more details:
++ For type 'GEN', the frequency of word 'world' is No1, the frequency of word 'heart' is No2, the frequency of word 'rock' is No5. While for type 'EXM', they are No3, No6 and NA(Not in top15). 
++ For type 'EXM', the frequency of word 'ive'(which is 'I've') is No1, word 'home' is No5, word 'girl' is No8. While for type 'GEN', they are No4, No10 and NA.
+
+####These findings indicate that 'world' and 'heart' are relative to positive emotion while 'ive', 'home' and 'girl' are relative to negative emotion. 
+####People in good mood tend to pay more attention on the world rather than home. Thus you can talk about world or even take her(him) to a vacation when she(he) in good mood.
+####Word 'ive'(I've) represents things finished in past. When you **start** to keep think about this sort of things, you may have a bad mood that you did not get what you believed you should earn. For example:"I've sacrificed that much and you left me at the end."
+####When you friends in bad mood, it is good for you to take him(she) to a bar. You can tell him(she) that life is not fair and noone can get everything he(she) earns. Maybe, you can also introduce him(her) some girls~
+
+**Note**:In this step, we don't divide 'in good mood' and 'like GEN music' that clearly because we assume people tend to search sympathy in music lyrics in the very beginning. Also, we are talk about the probabilities...
+
+
+###Step 3: Search more details of 'GEN' and 'EXM' music.
+####People experinced brokens tend to listen music whose lyrics includes these situations. People experinced failure tend to listen music whose lyrics includes complains to the fate.
+####Thus, even if your two friends **start** to be fond of 'EXM' music, you know they are possible in bad mood. However, they have negative emotion may not because the same reasons. To help your friends go our of this, you need to know their reasons which they may even don't want to talk at the beginning. To know reasons, you need to know more details of these two type of music.
+
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+lyrics_data_G<-Emo.data.G%>%
+  unnest_tokens(output=word,input=stemmedwords)
+positive <- get_sentiments("bing") %>%
+  filter(sentiment == "positive")
+bing <- get_sentiments("bing")
+```
+
+####Word cloud of 'GEN', which devide positive words and negative words.
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+lyrics_data_G %>%
+  inner_join(bing) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+  comparison.cloud(colors = c("#F8766D", "#00BFC4"),
+                   max.words = 100)
+```
+
+####Count of positive words of 'GEN'.
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+lyrics_data_G%>%
+  semi_join(positive) %>%
+  count(word, sort = TRUE)
+```
+
+####Figure of positive words and negative words of 'GEN'.
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+bing_word_counts <- lyrics_data_G %>%
+  inner_join(bing) %>%
+  count(word, sentiment, sort = TRUE)
+
+head(bing_word_counts)
+
+bing_word_counts %>%
+  filter(n > 50) %>%
+  mutate(n = ifelse(sentiment == "negative", -n, n)) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n, fill = sentiment)) +
+  geom_col() +
+  coord_flip() +
+  labs(y = "Contribution to sentiment of GEN")
+```
+
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+lyrics_data_E<-Emo.data.E%>%
+  unnest_tokens(output=word,input=stemmedwords)
+```
+
+####Word cloud of 'EXM', which devide positive words and negative words.
+```{r,warning=F}
+
+lyrics_data_E %>%
+  inner_join(bing) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+  comparison.cloud(colors = c("#F8766D", "#00BFC4"),
+                   max.words = 100)
+```
+
+####Count of positive words of 'EXM'.
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+lyrics_data_E%>%
+  semi_join(positive) %>%
+  count(word, sort = TRUE)
+```
+
+####Figure of positive words and negative words of 'EXM'.
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+bing_word_counts2 <- lyrics_data_E %>%
+  inner_join(bing) %>%
+  count(word, sentiment, sort = TRUE)
+
+head(bing_word_counts2)
+
+bing_word_counts2 %>%
+  filter(n > 100) %>%
+  mutate(n = ifelse(sentiment == "negative", -n, n)) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n, fill = sentiment)) +
+  geom_col() +
+  coord_flip() +
+  labs(y = "Contribution to sentiment of EXM")
+```
+
+####Compared with figures of 'GEN', figures of 'EXM' indicates that:
++ Word 'free' contributes more in 'EXM' than in 'GEN'. Free is more important to the positive emotion. Thus your friend may need help to get our of something that overwhelm him(her).
++ Word 'fall' contributes more in 'EXM'. People who **start** to like 'EXM' are more afriad of falling, which means they may be under too much pressure. You could try to help them finish their tasks.
+
+
+
+####Analysis based on the 8 emotion types for both 'GEN' and 'EXM'
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+scoreSentiment = function(tab)
+{
+ tab$syuzhet = get_sentiment(tab$stemmedwords, method="syuzhet")
+ tab$bing = get_sentiment(tab$stemmedwords, method="bing")
+ tab$afinn = get_sentiment(tab$stemmedwords, method="afinn")
+ tab$nrc = get_sentiment(tab$stemmedwords, method="nrc")
+ emotions = get_nrc_sentiment(tab$stemmedwords)
+ n = names(emotions)
+ for (nn in n) tab[, nn] = emotions[nn]
+ return(tab)
+}
+
+# get the sentiment scores for the dataset before 2000s
+Emo.data.G = scoreSentiment(Emo.data.G)
+Emo.data.E = scoreSentiment(Emo.data.E)
+```
+
+####Word cloud for 'GEN' of 8 emotion types.
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+# emotion analysis: anger, anticipation, disgust, fear, joy, sadness, surprise, trust
+# put everything in a single vector
+all = c(
+paste(Emo.data.G$stemmedwords[Emo.data.G$anger > 0], collapse=" "),
+paste(Emo.data.G$stemmedwords[Emo.data.G$anticipation > 0], collapse=" "),
+paste(Emo.data.G$stemmedwords[Emo.data.G$disgust > 0], collapse=" "),
+paste(Emo.data.G$stemmedwords[Emo.data.G$fear > 0], collapse=" "),
+paste(Emo.data.G$stemmedwords[Emo.data.G$joy > 0], collapse=" "),
+paste(Emo.data.G$stemmedwords[Emo.data.G$sadness > 0], collapse=" "),
+paste(Emo.data.G$stemmedwords[Emo.data.G$surprise > 0], collapse=" "),
+paste(Emo.data.G$stemmedwords[Emo.data.G$trust > 0], collapse=" ")
+)
+
+# create corpus
+corpus = Corpus(VectorSource(all))
+#
+# create term-document matrix
+tdm = TermDocumentMatrix(corpus)
+#
+# convert as matrix
+tdm = as.matrix(tdm)
+#
+# add column names
+colnames(tdm) = c('anger', 'anticipation', 'disgust', 'fear', 'joy', 'sadness', 'surprise', 'trust')
+#
+# Plot comparison wordcloud
+layout(matrix(c(1, 2), nrow=2), heights=c(1, 4))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.5, 'Emotion Comparison Word Cloud')
+comparison.cloud(tdm, random.order=FALSE,
+colors = c("lightpink", "green", "#6600CC", "palevioletred2", "skyblue", "orange", "#F8766D", "#00BFC4"),
+title.size=1.5, max.words=250)
+```
+
+####Word cloud for 'EXM' of 8 emotion types.
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+# emotion analysis: anger, anticipation, disgust, fear, joy, sadness, surprise, trust
+# put everything in a single vector
+all = c(
+paste(Emo.data.E$stemmedwords[Emo.data.E$anger > 0], collapse=" "),
+paste(Emo.data.E$stemmedwords[Emo.data.E$anticipation > 0], collapse=" "),
+paste(Emo.data.E$stemmedwords[Emo.data.E$disgust > 0], collapse=" "),
+paste(Emo.data.E$stemmedwords[Emo.data.E$fear > 0], collapse=" "),
+paste(Emo.data.E$stemmedwords[Emo.data.E$joy > 0], collapse=" "),
+paste(Emo.data.E$stemmedwords[Emo.data.E$sadness > 0], collapse=" "),
+paste(Emo.data.E$stemmedwords[Emo.data.E$surprise > 0], collapse=" "),
+paste(Emo.data.E$stemmedwords[Emo.data.E$trust > 0], collapse=" ")
+)
+
+# create corpus
+corpus = Corpus(VectorSource(all))
+#
+# create term-document matrix
+tdm = TermDocumentMatrix(corpus)
+#
+# convert as matrix
+tdm = as.matrix(tdm)
+#
+# add column names
+colnames(tdm) = c('anger', 'anticipation', 'disgust', 'fear', 'joy', 'sadness', 'surprise', 'trust')
+#
+# Plot comparison wordcloud
+layout(matrix(c(1, 2), nrow=2), heights=c(1, 4))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.5, 'Emotion Comparison Word Cloud')
+comparison.cloud(tdm, random.order=FALSE,
+colors = c("lightpink", "green", "#6600CC", "palevioletred2", "skyblue", "orange", "#F8766D", "#00BFC4"),
+title.size=1.5, max.words=250)
+```
+
+####Compared with people who like 'GEN' music (who are assumed to have relatively positive mood), people who like 'EXM' music:
++ Feel disgust about 'told', 'run', which indicates that they dislike being preached. Thus trying to teach them some thoeries in not a good idea.
++ Feel joy about 'found', 'sing', 'girl', 'eat', which indicates that they like to try something new, to sing songs, to eat delicious foods. Thus you'd better take your friends to go outside, like hiking, singing, dating and eating.
+
+
+####**Conclusion**:
++ We assume people tend to search sympathy from music lyrics. Thus music lyrics a person is fond of can reflect his emotion condition.
++ If your friends start to keep listening musics which belong to 'EXM', they are probably in a negative emotion. If your friends always like 'EXM' musics, they are possible in a negative mood for quite time.
++ When you realize that your friends may in bad moods. You could pay attention to find out the possible reasons with the support of my project.
++ Then you can choose appropriate methods to help them.
+
+
